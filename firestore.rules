@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userPath(schoolId) {
+      return /databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid);
+    }
+    function activeUser(schoolId) {
+      return signedIn() && exists(userPath(schoolId)) && get(userPath(schoolId)).data.active == true;
+    }
+    function role(schoolId) { return activeUser(schoolId) ? get(userPath(schoolId)).data.role : 'none'; }
+    function admin(schoolId) { return role(schoolId) == 'admin'; }
+    function manager(schoolId) { return role(schoolId) in ['admin', 'principal']; }
+    match /schools/{schoolId}/users/{userId} {
+      allow read: if activeUser(schoolId) && (request.auth.uid == userId || manager(schoolId));
+      allow create, update, delete: if admin(schoolId);
+    }
+    match /schools/{schoolId}/{collection}/{docId} {
+      allow read: if activeUser(schoolId) && (
+        manager(schoolId) ||
+        (role(schoolId) == 'staff' && collection in ['students','staff','attendance','exams','results'])
+      ) && collection != 'users';
+      allow create, update: if activeUser(schoolId) && (
+        admin(schoolId) ||
+        (role(schoolId) == 'principal' && collection in ['students','staff','attendance','expenses','exams','results','salary','payroll']) ||
+        (role(schoolId) == 'staff' && collection in ['attendance','students','results'])
+      );
+      allow delete: if activeUser(schoolId) && (
+        admin(schoolId) ||
+        (role(schoolId) == 'principal' && collection in ['students','staff','attendance','expenses','exams','results','salary','payroll'])
+      );
+    }
+  }
+}
